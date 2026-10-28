@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+html, body, #root { min-height: 100%; }
+body { @apply bg-surface text-ink antialiased overflow-x-hidden; }
+:focus-visible { @apply outline-2 outline-offset-2 outline-primary; }
