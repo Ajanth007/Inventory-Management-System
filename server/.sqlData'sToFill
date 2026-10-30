@@ -1,0 +1,261 @@
+-- =====================================================================
+-- OPERA — demo seed data (run AFTER opera_schema.sql, on an empty database)
+-- DEMO ONLY: the password hashes are fake, so none of these users can log in.
+-- Dates are relative to today (CURDATE()), so the data always looks recent.
+-- Row counts: 10+ in every table except companies (1), roles (4), document_sequences (4).
+--
+-- Stock stays consistent: products start at 0, stock_movements are generated from the
+-- received purchases and confirmed/completed sales (plus opening balances and one
+-- adjustment), and products.stock_qty is then synced from the ledger.
+-- Totals and invoice balances are also derived from their line items / payments.
+-- =====================================================================
+USE opera;
+START TRANSACTION;
+
+-- ---------------------------------------------------------------- company
+INSERT INTO companies (id, name, tax_id, country, email, phone, address, currency, locale, invoice_prefix, target_stock_factor) VALUES
+(1, 'Comercial Opera S.A.', 'COP-123456-7', 'Mexico', 'contacto@opera.demo', '+52 55 5550 0100', 'Av. Reforma 100, CDMX', 'USD', 'es-MX', 'INV-', 3.00);
+
+INSERT INTO document_sequences (company_id, doc_type, prefix, next_number) VALUES
+(1, 'sale', 'S-', 413), (1, 'purchase', 'P-', 191), (1, 'invoice', 'INV-', 311), (1, 'payment', 'PAY-', 111);
+
+-- ---------------------------------------------------------------- roles & users
+INSERT INTO roles (id, company_id, name, permissions) VALUES
+(1, 1, 'Administrator', '{"*":["read","write","delete"]}'),
+(2, 1, 'Sales',         '{"products":["read"],"customers":["read","write"],"sales":["read","write"],"invoices":["read","write"],"payments":["read","write"]}'),
+(3, 1, 'Warehouse',     '{"products":["read","write"],"inventory":["read","write"],"suppliers":["read"],"purchases":["read","write"]}'),
+(4, 1, 'Accountant',    '{"invoices":["read"],"payments":["read","write"],"expenses":["read","write"],"accounting":["read"]}');
+
+INSERT INTO users (id, company_id, role_id, name, email, password_hash, status, last_login_at) VALUES
+(1, 1, 1, 'Camila Rojas',   'camila@opera.demo',   '$2b$10$DEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMO', 'active',   NOW() - INTERVAL 1 HOUR),
+(2, 1, 3, 'Luis Méndez',    'luis@opera.demo',     '$2b$10$DEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMO', 'active',   NOW() - INTERVAL 3 HOUR),
+(3, 1, 4, 'Ana Paredes',    'ana@opera.demo',      '$2b$10$DEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMO', 'active',   NOW() - INTERVAL 2 DAY),
+(4, 1, 2, 'Diego Fuentes',  'diego@opera.demo',    NULL,                                                          'invited',  NULL),
+(5, 1, 2, 'Sofía Luna',     'sofia@opera.demo',    '$2b$10$DEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMO', 'inactive', NOW() - INTERVAL 60 DAY),
+(6, 1, 2, 'Marcos Gil',     'marcos@opera.demo',   '$2b$10$DEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMO', 'active',   NOW() - INTERVAL 5 HOUR),
+(7, 1, 3, 'Valeria Ortiz',  'valeria@opera.demo',  '$2b$10$DEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMO', 'active',   NOW() - INTERVAL 1 DAY),
+(8, 1, 4, 'Andrés Cruz',    'andres@opera.demo',   '$2b$10$DEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMO', 'active',   NOW() - INTERVAL 4 DAY),
+(9, 1, 2, 'Paula Soto',     'paula@opera.demo',    '$2b$10$DEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMO', 'active',   NOW() - INTERVAL 6 HOUR),
+(10, 1, 1, 'Ricardo Vela',  'ricardo@opera.demo',  '$2b$10$DEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMOHASHDEMO', 'active',   NOW() - INTERVAL 7 DAY);
+
+-- ---------------------------------------------------------------- catalog
+INSERT INTO categories (id, company_id, name, description, status) VALUES
+(1, 1, 'Electronics', 'Computers and peripherals', 'active'),
+(2, 1, 'Accessories', 'Cables, adapters and stands', 'active'),
+(3, 1, 'Office', 'Paper and stationery', 'active'),
+(4, 1, 'Home', 'Lighting and small appliances', 'active'),
+(5, 1, 'Seasonal', 'Limited-time items', 'inactive'),
+(6, 1, 'Networking', 'Routers, switches and cabling', 'active'),
+(7, 1, 'Storage', 'Drives and memory cards', 'active'),
+(8, 1, 'Audio', 'Headphones and speakers', 'active'),
+(9, 1, 'Furniture', 'Desks and chairs', 'active'),
+(10, 1, 'Cleaning', 'Cleaning and maintenance supplies', 'active');
+
+-- Stock starts at 0 and is synced from stock_movements further down.
+INSERT INTO products (id, company_id, category_id, sku, name, cost_price, sale_price, stock_qty, min_stock, target_stock, status) VALUES
+(1,  1, 1, 'ELEC-001', 'Wireless Mouse',        12.50,  25.00, 0, 10, 40,   'active'),
+(2,  1, 1, 'ELEC-002', 'Keyboard',              16.00,  40.00, 0, 10, 30,   'active'),
+(3,  1, 1, 'ELEC-003', 'Monitor 24"',          110.00, 175.00, 0, 10, 30,   'active'),
+(4,  1, 2, 'ACC-001',  'USB Cable',              2.40,   8.00, 0, 10, 50,   'active'),
+(5,  1, 2, 'ACC-014',  'HDMI Adapter',           5.00,  14.00, 0,  8, NULL, 'active'),
+(6,  1, 2, 'ACC-020',  'Laptop Stand',          14.00,  30.00, 0,  8, 24,   'active'),
+(7,  1, 1, 'ELEC-011', 'Webcam HD',             28.00,  55.00, 0,  5, 15,   'active'),
+(8,  1, 3, 'OFF-001',  'A4 Paper (500 sheets)',  3.20,   6.50, 0, 40, 120,  'active'),
+(9,  1, 3, 'OFF-007',  'Ballpoint Pens (12)',    1.10,   3.00, 0, 30, NULL, 'active'),
+(10, 1, 4, 'HOME-004', 'Desk Lamp',              9.00,  22.00, 0,  6, NULL, 'active'),
+(11, 1, 2, 'ELEC-020', 'USB Hub 4-port',         7.00,  18.00, 0, 10, 30,   'active'),
+(12, 1, 3, 'OFF-012',  'Stapler',                2.50,   7.00, 0, 15, 45,   'active');
+
+-- ---------------------------------------------------------------- parties
+INSERT INTO suppliers (id, company_id, name, contact, email, phone, country, status) VALUES
+(1,  1, 'TecnoImport SA',        'Jorge Salas',    'ventas@tecnoimport.example',  '+52 55 5550 1100', 'Mexico',    'active'),
+(2,  1, 'Accesorios del Sur',    'María Vega',     'maria@accsur.example',        '+56 2 2555 0199',  'Chile',     'active'),
+(3,  1, 'Global Parts',          'Tom Reyes',      'tom@globalparts.example',     '+1 305 555 0142',  'USA',       'active'),
+(4,  1, 'Papelera Andina',       'Rosa Quispe',    'rosa@papelera.example',       '+51 1 555 0123',   'Peru',      'inactive'),
+(5,  1, 'Muebles Pacífico',      'Lucía Ferrer',   'lucia@mpacifico.example',     '+57 2 555 0170',   'Colombia',  'active'),
+(6,  1, 'AudioMax Latam',        'Pedro Aranda',   'pedro@audiomax.example',      '+54 11 5550 0133', 'Argentina', 'active'),
+(7,  1, 'Distribuciones Quito',  'Carla Mena',     'carla@distquito.example',     '+593 2 555 0188',  'Ecuador',   'active'),
+(8,  1, 'Limpieza Total',        'Raúl Ibarra',    'raul@limpiezatotal.example',  '+52 33 5550 0121', 'Mexico',    'active'),
+(9,  1, 'Redes y Cables SA',     'Elena Duarte',   'elena@redescables.example',   '+598 2 555 0166',  'Uruguay',   'active'),
+(10, 1, 'Almacenes Bolívar',     'Simón Paz',      'simon@almbolivar.example',    '+58 212 555 0149', 'Venezuela', 'inactive');
+
+INSERT INTO customers (id, company_id, name, email, phone, city, tax_id, status) VALUES
+(1,  1, 'Distribuidora Andina',   'compras@andina.example',     '+57 1 555 0101',  'Bogotá',       'CO-900123', 'active'),
+(2,  1, 'Tienda La Esquina',      'hola@laesquina.example',     '+52 33 5550 0188','Guadalajara',  'MX-LES810', 'active'),
+(3,  1, 'Papelería Central',      'info@papcentral.example',    '+54 11 5550 0144','Buenos Aires', 'AR-30551',  'active'),
+(4,  1, 'Ferretería Norte',       'norte@ferre.example',        '+56 2 5550 0177', 'Santiago',     'CL-76112',  'active'),
+(5,  1, 'Café Mirador',           'cafe@mirador.example',        '+51 1 5550 0166', 'Lima',         'PE-20456',  'inactive'),
+(6,  1, 'Supermercado El Sol',    'compras@elsol.example',      '+52 55 5550 0155','CDMX',         'MX-SES770', 'active'),
+(7,  1, 'Oficinas Prisma',        'admin@prisma.example',       '+57 4 555 0112',  'Medellín',     'CO-811220', 'active'),
+(8,  1, 'Colegio San Martín',     'tesoreria@sanmartin.example','+54 351 555 0190','Córdoba',      'AR-30772',  'active'),
+(9,  1, 'Hotel Costa Azul',       'compras@costaazul.example',  '+593 4 555 0131', 'Guayaquil',    'EC-09921',  'active'),
+(10, 1, 'Clínica Vida',           'logistica@clinicavida.example','+56 32 555 0102','Valparaíso',  'CL-77340',  'active');
+
+-- ---------------------------------------------------------------- purchases
+INSERT INTO purchases (id, company_id, supplier_id, number, purchase_date, status, received_at, created_by) VALUES
+(1,  1, 1, 'P-0181', CURDATE() - INTERVAL 30 DAY, 'received',  NOW() - INTERVAL 30 DAY, 2),
+(2,  1, 3, 'P-0182', CURDATE() - INTERVAL 29 DAY, 'received',  NOW() - INTERVAL 29 DAY, 2),
+(3,  1, 2, 'P-0183', CURDATE() - INTERVAL 28 DAY, 'received',  NOW() - INTERVAL 28 DAY, 7),
+(4,  1, 4, 'P-0184', CURDATE() - INTERVAL 18 DAY, 'cancelled', NULL,                    2),
+(5,  1, 1, 'P-0185', CURDATE() - INTERVAL 6 DAY,  'draft',     NULL,                    7),
+(6,  1, 3, 'P-0186', CURDATE() - INTERVAL 4 DAY,  'received',  NOW() - INTERVAL 4 DAY,  2),
+(7,  1, 2, 'P-0187', CURDATE() - INTERVAL 1 DAY,  'ordered',   NULL,                    7),
+(8,  1, 1, 'P-0188', CURDATE() - INTERVAL 2 DAY,  'received',  NOW() - INTERVAL 2 DAY,  2),
+(9,  1, 5, 'P-0189', CURDATE() - INTERVAL 12 DAY, 'received',  NOW() - INTERVAL 12 DAY, 7),
+(10, 1, 6, 'P-0190', CURDATE() - INTERVAL 9 DAY,  'received',  NOW() - INTERVAL 9 DAY,  2);
+
+INSERT INTO purchase_items (purchase_id, product_id, qty, unit_cost) VALUES
+(1, 1, 30, 12.50), (1, 3, 5, 110.00),
+(2, 8, 100, 3.20),
+(3, 4, 60, 2.40),  (3, 5, 20, 5.00),
+(4, 9, 100, 1.10),
+(5, 2, 30, 16.00),
+(6, 8, 40, 3.20),  (6, 11, 40, 7.00),
+(7, 6, 24, 14.00), (7, 5, 30, 5.00),
+(8, 3, 10, 110.00),(8, 1, 10, 12.50),
+(9, 10, 12, 9.00), (9, 12, 30, 2.50),
+(10, 7, 15, 28.00);
+
+UPDATE purchases p SET subtotal = (SELECT SUM(line_total) FROM purchase_items WHERE purchase_id = p.id), tax = 0, total = subtotal;
+
+-- ---------------------------------------------------------------- sales
+INSERT INTO sales (id, company_id, customer_id, number, sale_date, payment_status, status, created_by) VALUES
+(1,  1, 1,  'S-0401', CURDATE() - INTERVAL 28 DAY, 'paid',    'completed', 6),
+(2,  1, 2,  'S-0402', CURDATE() - INTERVAL 26 DAY, 'paid',    'completed', 6),
+(3,  1, 3,  'S-0403', CURDATE() - INTERVAL 24 DAY, 'paid',    'completed', 9),
+(4,  1, 4,  'S-0404', CURDATE() - INTERVAL 20 DAY, 'partial', 'confirmed', 9),
+(5,  1, 5,  'S-0405', CURDATE() - INTERVAL 16 DAY, 'pending', 'cancelled', 6),
+(6,  1, 6,  'S-0406', CURDATE() - INTERVAL 14 DAY, 'paid',    'completed', 6),
+(7,  1, 7,  'S-0407', CURDATE() - INTERVAL 10 DAY, 'partial', 'confirmed', 9),
+(8,  1, 8,  'S-0408', CURDATE() - INTERVAL 7 DAY,  'pending', 'confirmed', 6),
+(9,  1, 9,  'S-0409', CURDATE() - INTERVAL 5 DAY,  'pending', 'confirmed', 9),
+(10, 1, 10, 'S-0410', CURDATE() - INTERVAL 3 DAY,  'paid',    'completed', 6),
+(11, 1, 2,  'S-0411', CURDATE() - INTERVAL 1 DAY,  'pending', 'confirmed', 9),
+(12, 1, 1,  'S-0412', CURDATE(),                   'paid',    'completed', 6);
+
+INSERT INTO sale_items (sale_id, product_id, qty, unit_price, unit_cost) VALUES
+(1, 3, 4, 175.00, 110.00),  (1, 2, 5, 40.00, 16.00),
+(2, 1, 20, 25.00, 12.50),   (2, 4, 20, 8.00, 2.40),
+(3, 8, 60, 6.50, 3.20),     (3, 9, 30, 3.00, 1.10),
+(4, 6, 5, 30.00, 14.00),    (4, 5, 16, 14.00, 5.00),
+(5, 10, 3, 22.00, 9.00),
+(6, 1, 20, 25.00, 12.50),   (6, 3, 6, 175.00, 110.00),
+(7, 2, 10, 40.00, 16.00),   (7, 11, 5, 18.00, 7.00),
+(8, 4, 40, 8.00, 2.40),     (8, 7, 10, 55.00, 28.00),
+(9, 12, 18, 7.00, 2.50),    (9, 9, 20, 3.00, 1.10),
+(10, 10, 9, 22.00, 9.00),   (10, 6, 13, 30.00, 14.00),
+(11, 1, 8, 25.00, 12.50),   (11, 5, 3, 14.00, 5.00),
+(12, 7, 5, 55.00, 28.00),   (12, 3, 8, 175.00, 110.00);
+
+UPDATE sales s SET subtotal = (SELECT SUM(line_total) FROM sale_items WHERE sale_id = s.id), tax = 0, total = subtotal;
+
+-- ---------------------------------------------------------------- invoices & payments
+-- One invoice per sale except S-0405 (cancelled) and S-0411 (not invoiced yet): INV-0301 … INV-0310.
+INSERT INTO invoices (company_id, sale_id, customer_id, number, issued_at, due_date, total, paid_amount, status)
+SELECT s.company_id, s.id, s.customer_id,
+       CONCAT('INV-', LPAD(300 + ROW_NUMBER() OVER (ORDER BY s.number), 4, '0')),
+       s.sale_date, s.sale_date + INTERVAL 15 DAY, s.total, 0, 'pending'
+FROM sales s
+WHERE s.company_id = 1 AND s.number IN ('S-0401','S-0402','S-0403','S-0404','S-0406','S-0407','S-0408','S-0409','S-0410','S-0412');
+
+INSERT INTO payments (company_id, invoice_id, customer_id, reference, method, amount, paid_at, created_by)
+SELECT 1, i.id, i.customer_id, x.ref, x.method, x.amount, NOW() - INTERVAL x.ago DAY, 3
+FROM (
+  SELECT 'INV-0301' inv, 'PAY-0101' ref, 'transfer' method, 900.00  amount, 27 ago UNION ALL
+  SELECT 'INV-0302',     'PAY-0102',     'cash',            660.00,         25 UNION ALL
+  SELECT 'INV-0303',     'PAY-0103',     'card',            300.00,         23 UNION ALL
+  SELECT 'INV-0303',     'PAY-0104',     'card',            180.00,         15 UNION ALL
+  SELECT 'INV-0304',     'PAY-0105',     'cash',            100.00,         18 UNION ALL
+  SELECT 'INV-0305',     'PAY-0106',     'transfer',       1000.00,         13 UNION ALL
+  SELECT 'INV-0305',     'PAY-0107',     'transfer',        550.00,          6 UNION ALL
+  SELECT 'INV-0306',     'PAY-0108',     'card',            200.00,          8 UNION ALL
+  SELECT 'INV-0309',     'PAY-0109',     'cash',            588.00,          2 UNION ALL
+  SELECT 'INV-0310',     'PAY-0110',     'card',           1675.00,          0
+) x JOIN invoices i ON i.company_id = 1 AND i.number = x.inv;
+
+-- Invoice balances and status come from the payments above.
+UPDATE invoices i SET paid_amount = COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id = i.id), 0);
+UPDATE invoices SET status = CASE
+  WHEN paid_amount >= total              THEN 'paid'
+  WHEN paid_amount > 0 AND due_date >= CURDATE() THEN 'partial'
+  WHEN due_date < CURDATE()              THEN 'overdue'
+  ELSE 'pending' END;
+
+-- ---------------------------------------------------------------- stock ledger
+-- 1) Opening balances (type adjustment, positive)
+INSERT INTO stock_movements (company_id, product_id, type, qty, reference_type, note, created_by, created_at) VALUES
+(1, 1,  'adjustment', 10,  'manual', 'Opening balance', 2, NOW() - INTERVAL 40 DAY),
+(1, 2,  'adjustment', 22,  'manual', 'Opening balance', 2, NOW() - INTERVAL 40 DAY),
+(1, 3,  'adjustment', 28,  'manual', 'Opening balance', 2, NOW() - INTERVAL 40 DAY),
+(1, 4,  'adjustment', 6,   'manual', 'Opening balance', 2, NOW() - INTERVAL 40 DAY),
+(1, 6,  'adjustment', 24,  'manual', 'Opening balance', 2, NOW() - INTERVAL 40 DAY),
+(1, 8,  'adjustment', 60,  'manual', 'Opening balance', 2, NOW() - INTERVAL 40 DAY),
+(1, 9,  'adjustment', 140, 'manual', 'Opening balance', 2, NOW() - INTERVAL 40 DAY),
+(1, 10, 'adjustment', 15,  'manual', 'Opening balance', 2, NOW() - INTERVAL 40 DAY),
+(1, 11, 'adjustment', 5,   'manual', 'Opening balance', 2, NOW() - INTERVAL 40 DAY);
+
+-- 2) Received purchases -> stock in
+INSERT INTO stock_movements (company_id, product_id, type, qty, reference_type, reference_id, note, created_by, created_at)
+SELECT p.company_id, pi.product_id, 'in', pi.qty, 'purchase', p.id, p.number, 2, TIMESTAMP(p.purchase_date, '10:00:00')
+FROM purchase_items pi JOIN purchases p ON p.id = pi.purchase_id WHERE p.status = 'received';
+
+-- 3) Confirmed / completed sales -> stock out (cancelled sales never touch stock)
+INSERT INTO stock_movements (company_id, product_id, type, qty, reference_type, reference_id, note, created_by, created_at)
+SELECT s.company_id, si.product_id, 'out', -si.qty, 'sale', s.id, s.number, s.created_by, TIMESTAMP(s.sale_date, '15:00:00')
+FROM sale_items si JOIN sales s ON s.id = si.sale_id WHERE s.status IN ('confirmed','completed');
+
+-- 4) A manual adjustment (damaged stock)
+INSERT INTO stock_movements (company_id, product_id, type, qty, reference_type, note, created_by, created_at) VALUES
+(1, 4, 'adjustment', -6, 'manual', 'Damaged units', 2, NOW() - INTERVAL 5 DAY);
+
+-- Sync the current balance from the ledger.
+-- Expected: ELEC-001=2, ELEC-002=7, ELEC-003=25, ACC-001=0, ACC-014=1, ACC-020=6, ELEC-011=0, OFF-001=140, OFF-007=90, HOME-004=18, ELEC-020=40, OFF-012=12
+UPDATE products p SET stock_qty = COALESCE((SELECT SUM(qty) FROM stock_movements WHERE product_id = p.id), 0);
+
+-- ---------------------------------------------------------------- expenses
+INSERT INTO expenses (company_id, expense_date, category, description, vendor, amount, status, created_by) VALUES
+(1, CURDATE() - INTERVAL 1 DAY,  'Rent',      'Warehouse rent — current month',   'Inmobiliaria Centro', 1800.00, 'paid',    3),
+(1, CURDATE() - INTERVAL 3 DAY,  'Utilities', 'Electricity',                      'Compañía Eléctrica',   214.30, 'paid',    3),
+(1, CURDATE() - INTERVAL 5 DAY,  'Payroll',   'Payroll — second half',            'Internal',            4200.00, 'paid',    8),
+(1, CURDATE() - INTERVAL 7 DAY,  'Logistics', 'Courier shipments',               'RápidoEnvíos',         389.90, 'pending', 3),
+(1, CURDATE() - INTERVAL 10 DAY, 'Marketing', 'Social media ads',                 'Meta Ads',             250.00, 'paid',    8),
+(1, CURDATE() - INTERVAL 12 DAY, 'Utilities', 'Internet and phone',               'Telecom Andina',       95.00,  'paid',    3),
+(1, CURDATE() - INTERVAL 15 DAY, 'Payroll',   'Payroll — first half',             'Internal',            4200.00, 'paid',    8),
+(1, CURDATE() - INTERVAL 18 DAY, 'Other',     'Office supplies',                  'Papelería Central',    62.40,  'paid',    3),
+(1, CURDATE() - INTERVAL 22 DAY, 'Logistics', 'Pallet transport from supplier',   'TransCarga',          540.00,  'paid',    8),
+(1, CURDATE() - INTERVAL 28 DAY, 'Marketing', 'Printed catalogs',                 'Imprenta Gráfica',    310.00,  'pending', 3);
+
+-- ---------------------------------------------------------------- audit logs & notifications
+INSERT INTO audit_logs (company_id, user_id, action, entity_type, entity_id, details, ip_address, created_at) VALUES
+(1, 6,    'create',       'sale',     12, 'Sale S-0412 confirmed and stock deducted',  '190.12.4.21', NOW() - INTERVAL 20 MINUTE),
+(1, 2,    'update',       'purchase', 8,  'P-0188 status changed to received',         '190.12.4.35', NOW() - INTERVAL 2 DAY),
+(1, 2,    'update',       'product',  4,  'Stock adjusted −6 (damaged units)',         '190.12.4.35', NOW() - INTERVAL 5 DAY),
+(1, 3,    'create',       'invoice',  10, 'Invoice INV-0310 generated',                '190.12.4.40', NOW() - INTERVAL 1 HOUR),
+(1, 1,    'update',       'user',     5,  'Account deactivated',                       '190.12.4.10', NOW() - INTERVAL 3 DAY),
+(1, NULL, 'login_failed', 'auth', NULL, 'Failed login for diego@opera.demo', '201.55.9.8', NOW() - INTERVAL 2 DAY),
+(1, 1,    'create',       'user',     4,  'Invited diego@opera.demo as Sales',         '190.12.4.10', NOW() - INTERVAL 4 DAY),
+(1, 7,    'create',       'purchase', 7,  'Purchase P-0187 created',                   '190.12.4.36', NOW() - INTERVAL 1 DAY),
+(1, 9,    'create',       'sale',     11, 'Sale S-0411 confirmed',                     '190.12.4.22', NOW() - INTERVAL 1 DAY),
+(1, 3,    'create',       'payment',  10, 'Payment PAY-0110 recorded',                 '190.12.4.40', NOW() - INTERVAL 30 MINUTE),
+(1, 1,    'update',       'company',  1,  'Default target stock factor set to 3',      '190.12.4.10', NOW() - INTERVAL 9 DAY),
+(1, 10,   'delete',       'product',  NULL,'Removed discontinued product ELEC-009',    '190.12.4.11', NOW() - INTERVAL 14 DAY),
+(1, 1,    'login',        'auth',     1,  'Successful login',                          '190.12.4.10', NOW() - INTERVAL 1 HOUR);
+
+INSERT INTO notifications (company_id, user_id, message, link, read_at) VALUES
+(1, NULL, 'USB Cable is out of stock',                 '/products?stock=out',      NULL),
+(1, NULL, 'Webcam HD is out of stock',                 '/products?stock=out',      NULL),
+(1, NULL, 'Wireless Mouse is critically low (2 left)', '/products?stock=low',      NULL),
+(1, NULL, 'HDMI Adapter is critically low (1 left)',   '/products?stock=low',      NULL),
+(1, 3,    'Invoice INV-0304 is overdue',               '/invoices',                NULL),
+(1, 3,    'Payment PAY-0110 recorded',                 '/payments',                NOW() - INTERVAL 20 MINUTE),
+(1, 2,    'Purchase P-0187 is awaiting delivery',      '/purchases',               NULL),
+(1, 1,    'Diego Fuentes has not accepted the invite', '/users',                   NULL),
+(1, 1,    'Monthly sales are up vs. last month',       '/',                        NOW() - INTERVAL 1 DAY),
+(1, NULL, 'Keyboard is low on stock (7 left)',         '/products?stock=low',      NULL);
+
+COMMIT;
+
+-- ---------------------------------------------------------------- quick checks (optional)
+-- SELECT name, sku, available, min_stock, stock_status, suggested_reorder FROM v_stock_status WHERE company_id = 1 AND stock_status <> 'in_stock' ORDER BY FIELD(stock_status,'out_of_stock','critical','low');
+-- SELECT number, total, paid_amount, status FROM invoices WHERE company_id = 1;
+-- SELECT * FROM v_receivables;

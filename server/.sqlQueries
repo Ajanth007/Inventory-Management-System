@@ -1,0 +1,406 @@
+-- =====================================================================
+-- OPERA — ERP MiPyme para LATAM
+-- MySQL 8.0.16+ schema (InnoDB, utf8mb4). CHECK constraints need 8.0.16+.
+--
+-- Conventions
+--   * Multi-tenant ready: every business table carries company_id.
+--   * Money  -> DECIMAL(14,2). Quantities -> INT (change to DECIMAL(12,3) if you sell by weight/length).
+--   * Stock: products.stock_qty is the current balance; stock_movements is the ledger.
+--     Always change both inside ONE transaction (see the example at the bottom).
+--   * Stock STATUS is derived (see v_stock_status); it is not stored.
+--   * Document numbers (S-0412, P-0188, INV-0331) come from document_sequences.
+-- =====================================================================
+
+CREATE DATABASE IF NOT EXISTS opera CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+USE opera;
+
+-- ---------------------------------------------------------------------
+-- Company (Company Settings page)
+-- ---------------------------------------------------------------------
+CREATE TABLE companies (
+  id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name                VARCHAR(150) NOT NULL,
+  tax_id              VARCHAR(40),                     -- RFC / NIT / RUT / CUIT ...
+  country             VARCHAR(80),
+  email               VARCHAR(150),
+  phone               VARCHAR(40),
+  address             VARCHAR(255),
+  currency            CHAR(3)      NOT NULL DEFAULT 'USD',      -- ISO 4217 (feeds VITE_CURRENCY)
+  locale              VARCHAR(10)  NOT NULL DEFAULT 'es-MX',    -- feeds VITE_LOCALE
+  invoice_prefix      VARCHAR(10)  NOT NULL DEFAULT 'INV-',
+  target_stock_factor DECIMAL(4,2) NOT NULL DEFAULT 3.00,       -- default target = min_stock * factor
+  created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE document_sequences (
+  company_id  BIGINT UNSIGNED NOT NULL,
+  doc_type    ENUM('sale','purchase','invoice','payment') NOT NULL,
+  prefix      VARCHAR(10) NOT NULL,
+  next_number INT UNSIGNED NOT NULL DEFAULT 1,
+  PRIMARY KEY (company_id, doc_type),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Users & roles
+-- ---------------------------------------------------------------------
+CREATE TABLE roles (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id  BIGINT UNSIGNED NOT NULL,
+  name        VARCHAR(50) NOT NULL,                    -- Administrator, Sales, Warehouse, Accountant
+  permissions JSON NOT NULL,                           -- e.g. {"products":["read","write"],"sales":["read"]}
+  UNIQUE KEY uq_role (company_id, name),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE users (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id    BIGINT UNSIGNED NOT NULL,
+  role_id       BIGINT UNSIGNED NOT NULL,
+  name          VARCHAR(120) NOT NULL,
+  email         VARCHAR(150) NOT NULL,
+  password_hash VARCHAR(255),                          -- bcrypt/argon2; NULL until an invite is accepted
+  status        ENUM('active','invited','inactive') NOT NULL DEFAULT 'invited',
+  last_login_at DATETIME NULL,
+  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_user_email (email),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (role_id)    REFERENCES roles(id)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Catalog
+-- ---------------------------------------------------------------------
+CREATE TABLE categories (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id  BIGINT UNSIGNED NOT NULL,
+  name        VARCHAR(100) NOT NULL,
+  description VARCHAR(255),
+  status      ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_category (company_id, name),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE products (
+  id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id   BIGINT UNSIGNED NOT NULL,
+  category_id  BIGINT UNSIGNED NULL,
+  sku          VARCHAR(40)  NOT NULL,
+  name         VARCHAR(150) NOT NULL,
+  cost_price   DECIMAL(14,2) NOT NULL DEFAULT 0,
+  sale_price   DECIMAL(14,2) NOT NULL DEFAULT 0,
+  stock_qty    INT NOT NULL DEFAULT 0,                 -- current balance (kept in sync with stock_movements)
+  min_stock    INT NOT NULL DEFAULT 0,                 -- alert threshold
+  target_stock INT NULL,                               -- reorder-up-to level; NULL => min_stock * companies.target_stock_factor
+  status       ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_product_sku (company_id, sku),
+  KEY ix_product_category (category_id),
+  KEY ix_product_stock (company_id, status, stock_qty),
+  CONSTRAINT ck_product_money CHECK (cost_price >= 0 AND sale_price >= 0),
+  CONSTRAINT ck_product_stock CHECK (stock_qty >= 0 AND min_stock >= 0),
+  FOREIGN KEY (company_id)  REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Parties
+-- ---------------------------------------------------------------------
+CREATE TABLE suppliers (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id BIGINT UNSIGNED NOT NULL,
+  name       VARCHAR(150) NOT NULL,
+  contact    VARCHAR(120),
+  email      VARCHAR(150),
+  phone      VARCHAR(40),
+  country    VARCHAR(80),
+  status     ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_supplier_name (company_id, name),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE customers (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id BIGINT UNSIGNED NOT NULL,
+  name       VARCHAR(150) NOT NULL,
+  email      VARCHAR(150),
+  phone      VARCHAR(40),
+  city       VARCHAR(80),
+  tax_id     VARCHAR(40),
+  status     ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_customer_name (company_id, name),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Purchasing
+-- ---------------------------------------------------------------------
+CREATE TABLE purchases (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id    BIGINT UNSIGNED NOT NULL,
+  supplier_id   BIGINT UNSIGNED NOT NULL,
+  number        VARCHAR(20) NOT NULL,                  -- P-0188
+  purchase_date DATE NOT NULL,
+  subtotal      DECIMAL(14,2) NOT NULL DEFAULT 0,
+  tax           DECIMAL(14,2) NOT NULL DEFAULT 0,
+  total         DECIMAL(14,2) NOT NULL DEFAULT 0,
+  status        ENUM('draft','ordered','received','cancelled') NOT NULL DEFAULT 'draft',
+  received_at   DATETIME NULL,
+  created_by    BIGINT UNSIGNED NULL,
+  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_purchase_number (company_id, number),
+  KEY ix_purchase_date (company_id, purchase_date),
+  FOREIGN KEY (company_id)  REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (created_by)  REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE purchase_items (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  purchase_id BIGINT UNSIGNED NOT NULL,
+  product_id  BIGINT UNSIGNED NOT NULL,
+  qty         INT NOT NULL,
+  unit_cost   DECIMAL(14,2) NOT NULL,
+  line_total  DECIMAL(14,2) GENERATED ALWAYS AS (qty * unit_cost) STORED,
+  CONSTRAINT ck_pitem CHECK (qty > 0 AND unit_cost >= 0),
+  KEY ix_pitem_product (product_id),
+  FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id)  REFERENCES products(id)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Sales, invoicing, payments
+-- ---------------------------------------------------------------------
+CREATE TABLE sales (
+  id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id     BIGINT UNSIGNED NOT NULL,
+  customer_id    BIGINT UNSIGNED NOT NULL,
+  number         VARCHAR(20) NOT NULL,                 -- S-0412
+  sale_date      DATE NOT NULL,
+  subtotal       DECIMAL(14,2) NOT NULL DEFAULT 0,
+  tax            DECIMAL(14,2) NOT NULL DEFAULT 0,
+  total          DECIMAL(14,2) NOT NULL DEFAULT 0,
+  payment_status ENUM('pending','partial','paid') NOT NULL DEFAULT 'pending',
+  status         ENUM('confirmed','completed','cancelled') NOT NULL DEFAULT 'confirmed',
+  created_by     BIGINT UNSIGNED NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_sale_number (company_id, number),
+  KEY ix_sale_date (company_id, sale_date, status),
+  KEY ix_sale_customer (customer_id),
+  FOREIGN KEY (company_id)  REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (customer_id) REFERENCES customers(id),
+  FOREIGN KEY (created_by)  REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE sale_items (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  sale_id    BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  qty        INT NOT NULL,
+  unit_price DECIMAL(14,2) NOT NULL,
+  unit_cost  DECIMAL(14,2) NOT NULL,                   -- snapshot of cost at sale time (for margin reports)
+  line_total DECIMAL(14,2) GENERATED ALWAYS AS (qty * unit_price) STORED,
+  CONSTRAINT ck_sitem CHECK (qty > 0 AND unit_price >= 0),
+  KEY ix_sitem_product (product_id),
+  FOREIGN KEY (sale_id)    REFERENCES sales(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES products(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE invoices (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id  BIGINT UNSIGNED NOT NULL,
+  sale_id     BIGINT UNSIGNED NULL,
+  customer_id BIGINT UNSIGNED NOT NULL,
+  number      VARCHAR(20) NOT NULL,                    -- INV-0331
+  issued_at   DATE NOT NULL,
+  due_date    DATE NOT NULL,
+  total       DECIMAL(14,2) NOT NULL,
+  paid_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  status      ENUM('pending','partial','paid','overdue','cancelled') NOT NULL DEFAULT 'pending',
+                                                       -- 'overdue' set by a daily job: due_date < today AND paid_amount < total
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_invoice_number (company_id, number),
+  KEY ix_invoice_status (company_id, status, due_date),
+  CONSTRAINT ck_invoice_paid CHECK (paid_amount >= 0 AND paid_amount <= total),
+  FOREIGN KEY (company_id)  REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (sale_id)     REFERENCES sales(id) ON DELETE SET NULL,
+  FOREIGN KEY (customer_id) REFERENCES customers(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE payments (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id  BIGINT UNSIGNED NOT NULL,
+  invoice_id  BIGINT UNSIGNED NOT NULL,
+  customer_id BIGINT UNSIGNED NOT NULL,
+  reference   VARCHAR(20) NOT NULL,                    -- PAY-0207
+  method      ENUM('cash','transfer','card') NOT NULL,
+  amount      DECIMAL(14,2) NOT NULL,
+  paid_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by  BIGINT UNSIGNED NULL,
+  UNIQUE KEY uq_payment_ref (company_id, reference),
+  KEY ix_payment_invoice (invoice_id),
+  CONSTRAINT ck_payment_amount CHECK (amount > 0),
+  FOREIGN KEY (company_id)  REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (invoice_id)  REFERENCES invoices(id),
+  FOREIGN KEY (customer_id) REFERENCES customers(id),
+  FOREIGN KEY (created_by)  REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Inventory ledger (Inventory / Stock Movements page)
+-- ---------------------------------------------------------------------
+CREATE TABLE stock_movements (
+  id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id     BIGINT UNSIGNED NOT NULL,
+  product_id     BIGINT UNSIGNED NOT NULL,
+  type           ENUM('in','out','adjustment') NOT NULL,
+  qty            INT NOT NULL,                         -- SIGNED: +10 received, -6 sold/damaged
+  reference_type ENUM('purchase','sale','manual') NOT NULL DEFAULT 'manual',
+  reference_id   BIGINT UNSIGNED NULL,                 -- purchases.id / sales.id
+  note           VARCHAR(255),
+  created_by     BIGINT UNSIGNED NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_move_product (product_id, created_at),
+  KEY ix_move_company (company_id, created_at),
+  CONSTRAINT ck_move_qty CHECK (qty <> 0),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id) REFERENCES products(id),
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Finance & system
+-- ---------------------------------------------------------------------
+CREATE TABLE expenses (
+  id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id   BIGINT UNSIGNED NOT NULL,
+  expense_date DATE NOT NULL,
+  category     ENUM('Rent','Utilities','Payroll','Logistics','Marketing','Other') NOT NULL,
+  description  VARCHAR(255) NOT NULL,
+  vendor       VARCHAR(150),
+  amount       DECIMAL(14,2) NOT NULL,
+  status       ENUM('pending','paid') NOT NULL DEFAULT 'pending',
+  created_by   BIGINT UNSIGNED NULL,
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_expense_date (company_id, expense_date),
+  CONSTRAINT ck_expense_amount CHECK (amount >= 0),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE audit_logs (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id  BIGINT UNSIGNED NOT NULL,
+  user_id     BIGINT UNSIGNED NULL,                    -- NULL for failed logins / system jobs
+  action      ENUM('create','update','delete','login','login_failed') NOT NULL,
+  entity_type VARCHAR(40) NOT NULL,                    -- 'sale', 'product', 'user', 'auth' ...
+  entity_id   BIGINT UNSIGNED NULL,
+  details     VARCHAR(500),
+  old_values  JSON NULL,
+  new_values  JSON NULL,
+  ip_address  VARCHAR(45),
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_audit_time (company_id, created_at),
+  KEY ix_audit_entity (company_id, entity_type, entity_id),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id)    REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;                                       -- append-only: never UPDATE/DELETE from the app
+
+CREATE TABLE notifications (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  company_id BIGINT UNSIGNED NOT NULL,
+  user_id    BIGINT UNSIGNED NULL,                     -- NULL = visible to everyone in the company
+  message    VARCHAR(255) NOT NULL,
+  link       VARCHAR(255),
+  read_at    DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_notif_user (company_id, user_id, read_at),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id)    REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- =====================================================================
+-- VIEWS for the dashboard (all filter by company_id in the API: WHERE company_id = ?)
+-- =====================================================================
+
+-- Stock status — same rules as src/utils/stock.js:
+--   out_of_stock: qty = 0 | critical: qty <= 25% of min | low: qty <= min | in_stock: otherwise
+-- suggested_reorder = GREATEST(0, target - available); target defaults to min * company factor.
+CREATE OR REPLACE VIEW v_stock_status AS
+SELECT p.id, p.company_id, p.name, p.sku,
+       p.stock_qty  AS available,
+       p.min_stock,
+       COALESCE(p.target_stock, CEIL(p.min_stock * c.target_stock_factor)) AS target_stock,
+       CASE WHEN p.stock_qty = 0                  THEN 'out_of_stock'
+            WHEN p.stock_qty <= p.min_stock * 0.25 THEN 'critical'
+            WHEN p.stock_qty <= p.min_stock        THEN 'low'
+            ELSE 'in_stock' END AS stock_status,
+       GREATEST(0, COALESCE(p.target_stock, CEIL(p.min_stock * c.target_stock_factor)) - p.stock_qty) AS suggested_reorder
+FROM products p JOIN companies c ON c.id = p.company_id
+WHERE p.status = 'active';
+
+-- GET /api/dashboard/stock-alerts  -> SELECT * FROM v_stock_status WHERE company_id=? AND stock_status <> 'in_stock'
+--                                      ORDER BY FIELD(stock_status,'out_of_stock','critical','low'), available;
+
+-- GET /api/dashboard/monthly-sales  (confirmed + completed only)
+CREATE OR REPLACE VIEW v_monthly_sales AS
+SELECT company_id, DATE_FORMAT(sale_date, '%Y-%m') AS ym, SUM(total) AS sales, COUNT(*) AS transactions
+FROM sales WHERE status IN ('confirmed','completed')
+GROUP BY company_id, ym;
+
+-- GET /api/dashboard/purchase-vs-sales  (only received purchases count as spend)
+CREATE OR REPLACE VIEW v_monthly_purchases AS
+SELECT company_id, DATE_FORMAT(purchase_date, '%Y-%m') AS ym, SUM(total) AS purchases
+FROM purchases WHERE status = 'received'
+GROUP BY company_id, ym;
+
+-- GET /api/dashboard/top-products  (add a date filter by querying sale_items directly when `range` is needed)
+CREATE OR REPLACE VIEW v_product_sales AS
+SELECT p.company_id, p.id AS product_id, p.name, p.sku, p.stock_qty AS stock,
+       SUM(si.qty) AS units_sold, SUM(si.line_total) AS revenue
+FROM sale_items si
+JOIN sales s    ON s.id = si.sale_id AND s.status IN ('confirmed','completed')
+JOIN products p ON p.id = si.product_id
+GROUP BY p.company_id, p.id, p.name, p.sku, p.stock_qty;
+
+-- Receivables for the "Pending Payments" card
+CREATE OR REPLACE VIEW v_receivables AS
+SELECT company_id, SUM(total - paid_amount) AS pending_amount, COUNT(*) AS open_invoices
+FROM invoices WHERE status IN ('pending','partial','overdue')
+GROUP BY company_id;
+
+-- Customer / supplier balances shown on the Customers and Suppliers pages
+CREATE OR REPLACE VIEW v_customer_balances AS
+SELECT c.id AS customer_id, c.company_id, COALESCE(SUM(i.total - i.paid_amount), 0) AS balance
+FROM customers c LEFT JOIN invoices i ON i.customer_id = c.id AND i.status IN ('pending','partial','overdue')
+GROUP BY c.id, c.company_id;
+
+CREATE OR REPLACE VIEW v_supplier_balances AS
+SELECT s.id AS supplier_id, s.company_id, COALESCE(SUM(p.total), 0) AS balance   -- received but unpaid; refine once supplier payments exist
+FROM suppliers s LEFT JOIN purchases p ON p.supplier_id = s.id AND p.status = 'received'
+GROUP BY s.id, s.company_id;
+
+-- =====================================================================
+-- EXAMPLE: receiving a purchase (do this in ONE transaction from Node)
+-- =====================================================================
+-- START TRANSACTION;
+--   UPDATE purchases SET status='received', received_at=NOW() WHERE id=:id AND status='ordered';
+--   -- for each purchase_item:
+--   UPDATE products SET stock_qty = stock_qty + :qty WHERE id=:product_id;
+--   INSERT INTO stock_movements (company_id, product_id, type, qty, reference_type, reference_id, created_by)
+--        VALUES (:company, :product_id, 'in', :qty, 'purchase', :id, :user);
+--   INSERT INTO audit_logs (company_id, user_id, action, entity_type, entity_id, details)
+--        VALUES (:company, :user, 'update', 'purchase', :id, 'Status changed to received');
+-- COMMIT;
+-- A sale does the inverse. Use SELECT ... FOR UPDATE on the product row, and let the CHECK (stock_qty >= 0)
+-- reject overselling.
+
+-- Next-number generation (inside the same transaction):
+--   UPDATE document_sequences SET next_number = LAST_INSERT_ID(next_number + 1)
+--    WHERE company_id=:company AND doc_type='sale';   -- then number = prefix + LPAD(LAST_INSERT_ID()-1, 4, '0')
