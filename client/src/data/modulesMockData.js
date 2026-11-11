@@ -1,3 +1,5 @@
+import axios from "axios";
+
 // DEMO DATA ONLY — none of this comes from a backend.
 const d = (n) => new Date(Date.now() - n * 86400000).toISOString();
 
@@ -13,6 +15,10 @@ export const mockProducts = [
   { id: 9, name: 'Ballpoint Pens (12)', sku: 'OFF-007', category: 'Office', cost: 1.1, price: 3, stock: 90, minStock: 30 },
   { id: 10, name: 'Desk Lamp', sku: 'HOME-004', category: 'Home', cost: 9, price: 22, stock: 18, minStock: 6 },
 ];
+
+
+
+
 export const mockCategories = [
   { id: 1, name: 'Electronics', description: 'Computers and peripherals', products: 4, status: 'active' },
   { id: 2, name: 'Accessories', description: 'Cables, adapters and stands', products: 3, status: 'active' },

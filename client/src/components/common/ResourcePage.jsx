@@ -6,6 +6,7 @@ import { createResource, listResource } from '../../services/moduleService';
 import { AsyncBlock, TableWrap, Td } from './Section';
 import PageHeader from './PageHeader';
 
+
 const input = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm';
 
 // Generic list page: stats strip, search, filters, sortable columns, pagination, and an "add" form.
@@ -41,8 +42,11 @@ export default function ResourcePage({ resource, title, subtitle, columns, filte
   const toggleSort = (key) => setSort((s) => (s?.key === key ? (s.dir === 'asc' ? { key, dir: 'desc' } : null) : { key, dir: 'asc' }));
   const filtered = q || Object.values(fv).some(Boolean);
 
+
   return (
+    
     <>
+    
       {!embedded && <PageHeader title={title} subtitle={subtitle} actions={fields && (
         <button onClick={() => setModal(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"><Plus className="h-4 w-4" />{addLabel}</button>)} />}
       {embedded && fields && <div className="mb-3 flex justify-end"><button onClick={() => setModal(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"><Plus className="h-4 w-4" />{addLabel}</button></div>}
