@@ -22,7 +22,12 @@ export default function ResourcePage({ resource, title, subtitle, columns, filte
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState(Boolean(fields) && params.get('new') === '1');
 
-  const all = useMemo(() => [...extra, ...(data || [])], [extra, data]);
+  // const all = useMemo(() => [...extra, ...(data || [])], [extra, data]);
+const safeData = Array.isArray(data) ? data : [];
+const all = useMemo(() => {
+  return [...safeData];
+}, [safeData]);
+
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
     const r = all.filter((row) =>

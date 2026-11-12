@@ -12,11 +12,6 @@ export const STOCK_FILTER = { key: 'stock', label: 'Stock', options: [['low', 'L
   match: (r, v) => (v === 'out' ? r.stock === 0 : v === 'low' ? r.stock > 0 && r.stock <= r.minStock : r.stock > r.minStock) };
 
 export default function Products() {
-//   useEffect(() => {
-//     fetchProducts().then(() => {
-//         console.log(mockProducts);
-//     });
-// }, []);
   return <ResourcePage resource="products" title="Products" subtitle="Manage your catalog, prices and stock thresholds" addLabel="Add product"
     searchKeys={['name', 'sku', 'category']} filters={[STOCK_FILTER, { key: 'category', label: 'Category', options: ['Electronics', 'Accessories', 'Office', 'Home'].map((c) => [c, c]), match: (r, v) => r.category === v }]}
     stats={(r) => [{ label: 'Products', value: formatNumber(r.length) }, { label: 'Stock value', value: formatCurrency(r.reduce((s, p) => s + p.stock * p.cost, 0)) },
