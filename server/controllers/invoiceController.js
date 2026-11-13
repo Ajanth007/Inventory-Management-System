@@ -1,10 +1,10 @@
 
-const db = require("../config/db");
+const {pool} = require("../config/db");
 const auditLog = require("../utils/auditLog");
 
 exports.listInvoices = async (req, res, next) => {
   try {
-    const [rows] = await db.query(
+    const [rows] = await pool.query(
       `SELECT i.*, c.name AS customer
        FROM invoices i
        JOIN customers c ON c.id = i.customer_id
@@ -20,7 +20,7 @@ exports.listInvoices = async (req, res, next) => {
 };
 
 exports.createInvoice = async (req, res, next) => {
-  const conn = await db.getConnection();
+  const conn = await pool.getConnection();
 
   try {
     const {

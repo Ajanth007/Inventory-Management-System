@@ -1,26 +1,67 @@
 
-const db = require("../config/db");
+const {pool} = require("../config/db");
 const auditLog = require("../utils/auditLog");
+
 
 exports.listPurchases = async (req, res, next) => {
   try {
-    const [rows] = await db.query(
-      `SELECT p.*, s.name AS supplier
+    console.log("========== LIST PURCHASES ==========");
+    console.log("Company ID:", req.user.company_id);
+
+    const [rows] = await pool.query(
+      `SELECT
+          p.id,
+          p.company_id,
+          p.supplier_id,
+          p.number,
+          p.purchase_date,
+          p.subtotal,
+          p.tax,
+          p.total,
+          p.status,
+          p.received_at,
+          p.created_at,
+          s.name AS supplier,
+          COALESCE(
+            JSON_ARRAYAGG(
+              CASE
+                WHEN pi.id IS NOT NULL THEN
+                  JSON_OBJECT(
+                    'id', pi.id,
+                    'product_id', pi.product_id,
+                    'product_name', pr.name,
+                    'qty', pi.qty,
+                    'unit_cost', pi.unit_cost,
+                    'line_total', pi.line_total
+                  )
+                ELSE NULL
+              END
+            ),
+            JSON_ARRAY()
+          ) AS items
        FROM purchases p
        JOIN suppliers s ON s.id = p.supplier_id
+       LEFT JOIN purchase_items pi ON pi.purchase_id = p.id
+       LEFT JOIN products pr ON pr.id = pi.product_id
        WHERE p.company_id = ?
+       GROUP BY p.id
        ORDER BY p.id DESC`,
       [req.user.company_id]
     );
 
+    console.log("Purchases fetched:", rows.length);
+
     res.json(rows);
+
   } catch (error) {
+    console.error("LIST PURCHASES ERROR:", error);
     next(error);
   }
 };
 
+
 exports.createPurchase = async (req, res, next) => {
-  const conn = await db.getConnection();
+  const conn = await pool.getConnection();
 
   try {
     const {
@@ -142,7 +183,7 @@ exports.createPurchase = async (req, res, next) => {
 };
 
 exports.receivePurchase = async (req, res, next) => {
-  const conn = await db.getConnection();
+  const conn = await pool.getConnection();
 
   try {
     await conn.beginTransaction();

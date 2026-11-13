@@ -1,5 +1,5 @@
 
-const db = require("../config/db");
+const {pool} = require("../config/db");
 
 async function auditLog({
   companyId,
@@ -12,7 +12,7 @@ async function auditLog({
   newValues = null,
   ipAddress = null
 }) {
-  await db.query(
+  await pool.query(
     `INSERT INTO audit_logs
     (
       company_id,

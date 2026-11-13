@@ -1,10 +1,10 @@
 
-const db = require("../config/db");
+const {pool} = require("../config/db");
 const auditLog = require("../utils/auditLog");
 
 exports.getSettings = async (req, res, next) => {
   try {
-    const [rows] = await db.query(
+    const [rows] = await pool.query(
       `SELECT
         id,
         name,
@@ -84,7 +84,7 @@ exports.saveSettings = async (req, res, next) => {
       });
     }
 
-    const [oldRows] = await db.query(
+    const [oldRows] = await pool.query(
       "SELECT * FROM companies WHERE id = ?",
       [req.user.company_id]
     );
@@ -100,7 +100,7 @@ exports.saveSettings = async (req, res, next) => {
       field => `${field} = ?`
     ).join(", ");
 
-    await db.query(
+    await pool.query(
       `UPDATE companies
        SET ${assignments}
        WHERE id = ?`,
@@ -110,7 +110,7 @@ exports.saveSettings = async (req, res, next) => {
       ]
     );
 
-    const [rows] = await db.query(
+    const [rows] = await pool.query(
       `SELECT
         id, name, tax_id, country, email,
         phone, address, currency, locale,

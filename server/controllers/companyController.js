@@ -1,9 +1,9 @@
 
-const db = require("../config/db");
+const {pool} = require("../config/db");
 
 exports.getCompany = async (req, res, next) => {
   try {
-    const [rows] = await db.query(
+    const [rows] = await pool.query(
       `SELECT
         id,
         name,

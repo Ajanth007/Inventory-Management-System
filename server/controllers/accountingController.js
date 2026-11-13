@@ -1,11 +1,11 @@
 
-const db = require("../config/db");
+const {pool} = require("../config/db");
 
 exports.getAccountingOverview = async (req, res, next) => {
   try {
     const companyId = req.user.company_id;
 
-    const [[sales]] = await db.query(
+    const [[sales]] = await pool.query(
       `SELECT COALESCE(SUM(total), 0) AS revenue
        FROM sales
        WHERE company_id = ?
@@ -13,7 +13,7 @@ exports.getAccountingOverview = async (req, res, next) => {
       [companyId]
     );
 
-    const [[expenses]] = await db.query(
+    const [[expenses]] = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS expenses
        FROM expenses
        WHERE company_id = ?
@@ -21,7 +21,7 @@ exports.getAccountingOverview = async (req, res, next) => {
       [companyId]
     );
 
-    const [[receivables]] = await db.query(
+    const [[receivables]] = await pool.query(
       `SELECT COALESCE(SUM(total - paid_amount), 0) AS receivables
        FROM invoices
        WHERE company_id = ?
@@ -29,7 +29,7 @@ exports.getAccountingOverview = async (req, res, next) => {
       [companyId]
     );
 
-    const [[costs]] = await db.query(
+    const [[costs]] = await pool.query(
       `SELECT COALESCE(SUM(si.qty * si.unit_cost), 0) AS cost_of_goods
        FROM sale_items si
        INNER JOIN sales s ON s.id = si.sale_id
@@ -38,7 +38,7 @@ exports.getAccountingOverview = async (req, res, next) => {
       [companyId]
     );
 
-    const [monthly] = await db.query(
+    const [monthly] = await pool.query(
       `SELECT
         DATE_FORMAT(months.month_date, '%b') AS month,
         COALESCE(s.revenue, 0) AS revenue,

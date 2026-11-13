@@ -1,10 +1,10 @@
 
-const db = require("../config/db");
+const {pool} = require("../config/db");
 const auditLog = require("../utils/auditLog");
 
 exports.listMovements = async (req, res, next) => {
   try {
-    const [rows] = await db.query(
+    const [rows] = await pool.query(
       `SELECT
         sm.*,
         p.name AS product_name,
@@ -23,7 +23,7 @@ exports.listMovements = async (req, res, next) => {
 };
 
 exports.adjustStock = async (req, res, next) => {
-  const conn = await db.getConnection();
+  const conn = await pool.getConnection();
 
   try {
     const {

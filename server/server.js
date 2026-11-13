@@ -92,7 +92,8 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const db = require("./config/db");
+const {pool} = require("./config/db");
+
 
 const app = express();
 
@@ -129,7 +130,7 @@ app.get("/", (req, res) => {
 // Database health check
 app.get("/api/health", async (req, res, next) => {
   try {
-    await db.query("SELECT 1");
+    await pool.query("SELECT 1");
 
     res.json({
       success: true,
@@ -168,6 +169,12 @@ app.use("/api/inventory", require("./routes/inventoryRoutes"));
 // Accounting
 app.use("/api/accounting", require("./routes/accountingRoutes"));
 
+// Users
+app.use("/api/users",require("./routes/userRoutes"));
+
+// Audit-Logs
+app.use("/api/audit-logs", require("./routes/auditLogRoutes"));
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
@@ -178,6 +185,8 @@ app.use((req, res) => {
 
 // Error handler
 app.use(require("./middleware/errorMiddleware"));
+
+
 
 const PORT = process.env.PORT || 8000;
 
