@@ -175,6 +175,10 @@ app.use("/api/users",require("./routes/userRoutes"));
 // Audit-Logs
 app.use("/api/audit-logs", require("./routes/auditLogRoutes"));
 
+// Dashboard-Routes 
+
+app.use("/api/dashboard", require("./routes/dashboardRoutes"));
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({

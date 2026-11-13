@@ -16,9 +16,6 @@ export const mockProducts = [
   { id: 10, name: 'Desk Lamp', sku: 'HOME-004', category: 'Home', cost: 9, price: 22, stock: 18, minStock: 6 },
 ];
 
-
-
-
 export const mockCategories = [
   { id: 1, name: 'Electronics', description: 'Computers and peripherals', products: 4, status: 'active' },
   { id: 2, name: 'Accessories', description: 'Cables, adapters and stands', products: 3, status: 'active' },
